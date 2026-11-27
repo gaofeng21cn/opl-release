@@ -21,3 +21,11 @@
 
 - **Read-only Observer (`observe-daily-releases.yml`)**: Requires only `contents: read` and `actions: read`. Holds zero GitHub App private keys, zero Apple certificates, and zero GHCR write scopes.
 - **Control Plane (`control-daily-releases.yml`)**: Isolated to `release-control` environment / `ENABLE_DAILY_CONTROL` opt-in guard. Private package repos execute `reusable-publish-package-v2.yml` from inside their own repositories with their own `GITHUB_TOKEN` and signing environments.
+
+## Daily Owner Dispatch
+
+An owner can declare `daily_dispatch: true` on one lane in `.opl-release.json`. For legacy `product-release.json`, put the field on the primary publisher declaration at the top level or in one `observed_publishers` entry. The lane's `workflow` selects the receiver. This setting is independent of the product's version preparation strategy and primary publication lane. Fleet entries marked `observe_only` remain outside dispatch.
+
+On the central GitHub schedule, a separate job dispatches the owner workflow on `main` with the single string input `opl_release_control_run_id`. The owner receiver includes `[opl-release:<id>]` in its run name and verifies the scoped `opl-package-publisher[bot]` actor (ID `356454848`) and the original scheduled controller run before applying its own release rules.
+
+The controller checks for the matching owner run before issuing a POST. It verifies the same workflow, ref, dispatch event, actor and exact marker after the POST. If GitHub returns an empty response or a transport error, it checks existing runs. Reruns of the controller only reconcile the existing request. Each declared lane produces a dispatch receipt, including an `unknown` result when GitHub cannot confirm the run. Publication remains with the owner workflow.

@@ -63,6 +63,7 @@
           "receipt_required": { "type": "boolean" },
           "qualification_required": { "type": "boolean" },
           "recheck_after_success": { "type": "boolean" },
+          "daily_dispatch": { "const": true },
           "channel": {
             "type": "object",
             "additionalProperties": false,
@@ -79,7 +80,10 @@
             }
           }
         }
-      }
+      },
+      "contains": { "required": ["daily_dispatch"] },
+      "minContains": 0,
+      "maxContains": 1
     }
   }
 }

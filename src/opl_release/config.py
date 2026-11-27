@@ -69,6 +69,8 @@ def _validate_v1(cfg: dict) -> dict:
     seen_lanes: set[str] = set()
     normalized_lanes: list[dict] = []
     for item in lanes:
+        if not isinstance(item, dict):
+            raise ReleaseError('Each release lane must be an object')
         lane_id = item.get('lane', '')
         workflow = item.get('workflow', '')
         if not LANE_RE.fullmatch(lane_id) or lane_id in seen_lanes:
@@ -77,9 +79,13 @@ def _validate_v1(cfg: dict) -> dict:
             raise ReleaseError(f'Invalid lane workflow: {workflow!r}')
         seen_lanes.add(lane_id)
         entry = dict(item)
+        if 'daily_dispatch' in entry and entry['daily_dispatch'] is not True:
+            raise ReleaseError('daily_dispatch must be true when declared')
         if 'channel' in entry and entry['channel'] is not None:
             entry['channel'] = _normalize_channel(entry['channel'], repository=repo)
         normalized_lanes.append(entry)
+    if sum(bool(lane.get('daily_dispatch')) for lane in normalized_lanes) > 1:
+        raise ReleaseError('Only one lane may declare daily_dispatch')
     out = dict(cfg)
     out['lanes'] = normalized_lanes
     return out
@@ -102,6 +108,8 @@ def _from_legacy_product_release(raw: dict) -> dict:
     }
     if raw.get('publisher_title_from_tag'):
         primary_lane['title_from_tag'] = raw['publisher_title_from_tag']
+    if 'daily_dispatch' in raw:
+        primary_lane['daily_dispatch'] = raw['daily_dispatch']
     if raw.get('publication_stage') == 'candidate_until_device_qualification':
         primary_lane['qualification_required'] = True
     if raw.get('recheck_after_success'):
@@ -116,7 +124,7 @@ def _from_legacy_product_release(raw: dict) -> dict:
             'workflow': obs['workflow'],
             'primary': False,
         }
-        for field in ('event', 'match', 'title_pattern', 'title_from_tag'):
+        for field in ('event', 'match', 'title_pattern', 'title_from_tag', 'daily_dispatch'):
             if field in obs:
                 lane_entry[field] = obs[field]
         if obs.get('receipt'):
