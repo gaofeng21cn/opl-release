@@ -132,13 +132,17 @@ jobs:
       - name: Dispatch explicitly admitted owner schedule
         if: ${{ !matrix.subject.observe_only && (github.event_name == 'schedule' || inputs.apply) }}
         env:
-          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
           PYTHONPATH: ${{ github.workspace }}/controller/src
           PYTHONDONTWRITEBYTECODE: '1'
           TARGET_REPOSITORY: ${{ matrix.subject.repository }}
           TARGET_SUBJECT_ID: ${{ matrix.subject.subject_id }}
         run: |
           set -euo pipefail
+          if [ -z "$GH_TOKEN" ]; then
+            echo "Owner workflow dispatch requires the scoped GitHub App installation token." >&2
+            exit 1
+          fi
           python3 -B -m opl_release dispatch-owner \
             --owner-root owner \
             --repository "$TARGET_REPOSITORY" \

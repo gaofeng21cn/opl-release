@@ -28,8 +28,13 @@ def _run_matches(run: dict, *, control_run_id: str, workflow: str, ref: str, dis
     created_at = _parse_time(run.get('created_at'))
     if created_at is not None and created_at + 5 < dispatched_at:
         return False
-    marker = f'opl-release:{control_run_id}'
-    return marker in str(run.get('display_title', '')) or marker in str(run.get('name', ''))
+    markers = (
+        f'opl-release:{control_run_id}',
+        f'opl-release control run {control_run_id}',
+    )
+    title = str(run.get('display_title', ''))
+    name = str(run.get('name', ''))
+    return any(marker in title or marker in name for marker in markers)
 
 
 def dispatch_owner_workflow(
@@ -41,9 +46,9 @@ def dispatch_owner_workflow(
 ) -> dict:
     """Dispatch one explicitly admitted owner lane and bind the resulting run.
 
-    The owner workflow must echo `opl-release:<control_run_id>` in its run-name
-    and accept the configured input. An empty dispatch response is reconciled
-    by this marker and never by selecting the newest run.
+    The owner workflow must echo a controller marker in its run-name and accept
+    the configured input. An empty dispatch response is reconciled by that
+    marker and never by selecting the newest run.
     """
     if spec.get('enabled') is not True:
         raise ReleaseError('Owner dispatch is not explicitly enabled')

@@ -133,6 +133,29 @@ class DispatchTests(unittest.TestCase):
             )
         self.assertEqual(result['workflow_run_id'], 12)
 
+    def test_empty_response_reconciles_owner_standard_nightly_title(self):
+        def fake_gh(endpoint, **kwargs):
+            if endpoint.endswith('/dispatches'):
+                return None
+            return {'workflow_runs': [{
+                'id': 13,
+                'path': '.github/workflows/release-nightly.yml',
+                'event': 'workflow_dispatch',
+                'head_branch': 'main',
+                'created_at': '2026-11-28T00:00:00Z',
+                'display_title': 'OPL Standard Nightly (scheduled-production via opl-release control run 18)',
+                'html_url': 'https://github.com/o/r/actions/runs/13',
+            }]}
+
+        with patch('opl_release.dispatch.gh', side_effect=fake_gh), patch('opl_release.dispatch.time.time', return_value=1795824000):
+            result = dispatch_owner_workflow(
+                'gaofeng21cn/one-person-lab-app',
+                {'enabled': True, 'workflow': 'release-nightly.yml', 'ref': 'main', 'control_run_id_input': 'opl_release_control_run_id'},
+                control_run_id=18,
+                reconcile_seconds=0,
+            )
+        self.assertEqual(result['workflow_run_id'], 13)
+
     def test_unknown_empty_response_fails_without_retry(self):
         calls = []
 
