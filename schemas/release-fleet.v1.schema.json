@@ -29,7 +29,8 @@
         "properties": {
           "subject_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$" },
           "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
-          "observe_only": { "type": "boolean" }
+          "observe_only": { "type": "boolean" },
+          "enable_owner_dispatch": { "type": "boolean", "default": false }
         }
       }
     }

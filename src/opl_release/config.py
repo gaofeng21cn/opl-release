@@ -223,5 +223,7 @@ def validate_fleet_manifest(fleet: dict) -> dict:
             raise ReleaseError(f'Invalid or duplicate subject_id in fleet.json: {sid!r}')
         if not REPO_RE.fullmatch(repo):
             raise ReleaseError(f'Invalid repository in fleet.json: {repo!r}')
+        if 'enable_owner_dispatch' in row and not isinstance(row['enable_owner_dispatch'], bool):
+            raise ReleaseError(f'enable_owner_dispatch must be a boolean for {sid!r}')
         seen.add(sid)
     return fleet

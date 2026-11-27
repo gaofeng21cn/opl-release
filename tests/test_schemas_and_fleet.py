@@ -17,6 +17,12 @@ class SchemaAndFleetTests(unittest.TestCase):
         self.assertGreaterEqual(len(validated['products']), 8)
         self.assertIn('catalog_source', validated)
 
+    def test_owner_dispatch_gate_rejects_string_values(self):
+        fleet = json.loads((ROOT / 'fleet.json').read_text(encoding='utf-8'))
+        fleet['products'][0]['enable_owner_dispatch'] = 'true'
+        with self.assertRaisesRegex(Exception, 'enable_owner_dispatch'):
+            validate_fleet_manifest(fleet)
+
     def test_schemas_are_valid_json_documents(self):
         for name in (
             'opl-release.v1.schema.json',

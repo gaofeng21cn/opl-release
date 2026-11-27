@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
+import re
 import subprocess
+import tempfile
+from textwrap import dedent
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +37,37 @@ class ScriptsAndWorkflowsTests(unittest.TestCase):
         control_wf = (ROOT / '.github/workflows/control-daily-releases.yml').read_text(encoding='utf-8')
         self.assertIn('repositories: ${{ matrix.subject.repository_name }}', control_wf)
         self.assertNotIn('repositories: ${{ matrix.subject.repository }}', control_wf)
+
+    def test_owner_dispatch_inventory_requires_opt_in_without_changing_prepare_inventory(self):
+        control_wf = (ROOT / '.github/workflows/control-daily-releases.yml').read_text(encoding='utf-8')
+        inventory = re.search(r"python3 -B - <<'PY'\n(.*?)\n +PY", control_wf, re.DOTALL)
+        self.assertIsNotNone(inventory)
+        products = [
+            {'subject_id': 'absent', 'repository': 'example/absent'},
+            {'subject_id': 'disabled', 'repository': 'example/disabled', 'enable_owner_dispatch': False},
+            {'subject_id': 'enabled', 'repository': 'example/enabled', 'enable_owner_dispatch': True},
+            {
+                'subject_id': 'observed', 'repository': 'example/observed',
+                'enable_owner_dispatch': True, 'observe_only': True,
+            },
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'fleet.json').write_text(json.dumps({
+                'schema_version': 'opl.release-fleet.v1', 'owner': 'example', 'products': products,
+            }), encoding='utf-8')
+            output = root / 'output'
+            result = subprocess.run(
+                ['python3', '-B', '-c', dedent(inventory[1])],
+                cwd=root, env={**os.environ, 'PYTHONPATH': str(ROOT / 'src'), 'GITHUB_OUTPUT': str(output), 'SUBJECT_ID': ''},
+                capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            matrix = dict(line.split('=', 1) for line in output.read_text(encoding='utf-8').splitlines())
+        self.assertEqual([row['subject_id'] for row in json.loads(matrix['subjects'])], [
+            'absent', 'disabled', 'enabled', 'observed',
+        ])
+        self.assertEqual([row['subject_id'] for row in json.loads(matrix['dispatch_subjects'])], ['enabled'])
 
 
 if __name__ == '__main__':

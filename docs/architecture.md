@@ -24,7 +24,7 @@
 
 ## Daily Owner Dispatch
 
-An owner can declare `daily_dispatch: true` on one lane in `.opl-release.json`. For legacy `product-release.json`, put the field on the primary publisher declaration at the top level or in one `observed_publishers` entry. The lane's `workflow` selects the receiver. This setting is independent of the product's version preparation strategy and primary publication lane. Fleet entries marked `observe_only` remain outside dispatch.
+An owner can declare `daily_dispatch: true` on one lane in `.opl-release.json`. For legacy `product-release.json`, put the field on the primary publisher declaration at the top level or in one `observed_publishers` entry. The lane's `workflow` selects the receiver. This setting is independent of the product's version preparation strategy and primary publication lane. During cutover, a subject requires `enable_owner_dispatch: true` in `fleet.json` to enter the dispatch matrix. Fleet entries marked `observe_only` are excluded. See the [migration sequence](migration-cutover.md#switching-an-owner-schedule).
 
 On the central GitHub schedule, a separate job dispatches the owner workflow on `main` with the single string input `opl_release_control_run_id`. The owner receiver includes `[opl-release:<id>]` in its run name and verifies the scoped `opl-package-publisher[bot]` actor (ID `356454848`) and the original scheduled controller run before applying its own release rules.
 

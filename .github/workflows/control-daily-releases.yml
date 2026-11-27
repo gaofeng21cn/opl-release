@@ -41,11 +41,14 @@ jobs:
       - id: select
         env:
           SUBJECT_ID: ${{ inputs.subject_id }}
+          PYTHONPATH: src
         run: |
-          python3 - <<'PY'
+          python3 -B - <<'PY'
           import json, os
           from pathlib import Path
-          products = json.loads(Path('fleet.json').read_text())['products']
+          from opl_release.config import validate_fleet_manifest
+
+          products = validate_fleet_manifest(json.loads(Path('fleet.json').read_text()))['products']
           selected = os.environ.get('SUBJECT_ID', '').strip()
           if selected:
               products = [p for p in products if p['subject_id'] == selected]
@@ -53,13 +56,17 @@ jobs:
                   raise SystemExit(f'Unknown subject_id: {selected}')
           for item in products:
               item['repository_name'] = item['repository'].split('/', 1)[1]
+          dispatch_subjects = [
+              item for item in products
+              if item.get('enable_owner_dispatch') is True and not item.get('observe_only')
+          ]
           with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
               fh.write('subjects=' + json.dumps(products) + '\n')
-              fh.write('dispatch_subjects=' + json.dumps([p for p in products if not p.get('observe_only')]) + '\n')
+              fh.write('dispatch_subjects=' + json.dumps(dispatch_subjects) + '\n')
           PY
       - name: Read the original controller run creation time
         id: control-run
-        if: github.event_name == 'schedule'
+        if: github.event_name == 'schedule' && steps.select.outputs.dispatch_subjects != '[]'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
