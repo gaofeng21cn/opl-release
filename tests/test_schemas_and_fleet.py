@@ -57,6 +57,43 @@ class SchemaAndFleetTests(unittest.TestCase):
         self.assertEqual(norm_pkg['lanes'][0]['channel']['kind'], 'oci')
         self.assertEqual(norm_pkg['lanes'][1]['workflow'], 'native.yml')
 
+    def test_owner_schedule_dispatch_belongs_to_primary_lane(self):
+        cfg = normalize_release_config({
+            'schema_version': 'opl.release.v1',
+            'subject_id': 'owner-product',
+            'kind': 'product',
+            'repository': 'gaofeng21cn/owner-product',
+            'schedule': 'owner_schedule',
+            'lanes': [{
+                'lane': 'stable',
+                'workflow': 'stable.yml',
+                'primary': True,
+                'daily_dispatch': {
+                    'enabled': True,
+                    'control_run_id_input': 'control',
+                },
+            }],
+        })
+        self.assertEqual(cfg['lanes'][0]['daily_dispatch']['control_run_id_input'], 'control')
+
+    def test_daily_dispatch_is_rejected_outside_primary_owner_lane(self):
+        with self.assertRaisesRegex(Exception, 'primary lane'):
+            normalize_release_config({
+                'schema_version': 'opl.release.v1',
+                'subject_id': 'owner-product',
+                'kind': 'product',
+                'repository': 'gaofeng21cn/owner-product',
+                'schedule': 'owner_schedule',
+                'lanes': [{
+                    'lane': 'stable',
+                    'workflow': 'stable.yml',
+                    'primary': False,
+                    'daily_dispatch': {
+                        'enabled': True,
+                        'control_run_id_input': 'control',
+                    },
+                }],
+            })
 
 if __name__ == '__main__':
     unittest.main()

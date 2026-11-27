@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
 import sys
 
 from .common import ReleaseError, configure_token_refresh_from_env, read_json, write_json
 from .config import load_release_config_from_dir, validate_fleet_manifest
+from .dispatch import dispatch_configured_owner
 from .observe import observe_fleet, render_markdown
 from .prepare import prepare_repository
 from .probes import probe_channel
@@ -54,6 +56,14 @@ def build_parser() -> argparse.ArgumentParser:
     prep.add_argument('--owner-root', type=Path, required=True)
     prep.add_argument('--apply', action='store_true')
     prep.add_argument('--output', type=Path)
+
+    dispatch = sub.add_parser('dispatch-owner', help='Dispatch one explicitly admitted owner-scheduled workflow')
+    dispatch.add_argument('--owner-root', type=Path, required=True)
+    dispatch.add_argument('--repository', required=True)
+    dispatch.add_argument('--subject-id', required=True)
+    dispatch.add_argument('--control-run-id', required=True)
+    dispatch.add_argument('--reconcile-seconds', type=int, default=60)
+    dispatch.add_argument('--output', type=Path, required=True)
 
     obs = sub.add_parser('observe', help='Read-only fleet observation across products and opl-catalog')
     obs.add_argument('--fleet', type=Path, required=True)
@@ -116,6 +126,19 @@ def main(argv: list[str] | None = None) -> int:
             if args.output:
                 write_json(args.output, result)
             import json
+            print(json.dumps(result, indent=2))
+            return 0
+
+        if args.command == 'dispatch-owner':
+            configure_token_refresh_from_env()
+            result = dispatch_configured_owner(
+                args.owner_root,
+                expected_repository=args.repository,
+                expected_subject_id=args.subject_id,
+                control_run_id=args.control_run_id,
+                reconcile_seconds=args.reconcile_seconds,
+            )
+            write_json(args.output, result)
             print(json.dumps(result, indent=2))
             return 0
 
