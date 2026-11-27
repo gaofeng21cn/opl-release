@@ -222,10 +222,20 @@ def run(argv: list[str] | tuple[str, ...], *, cwd: Path | str | None = None, che
     return result
 
 
-def gh(endpoint: str, *, method: str = 'GET', payload: dict | None = None, timeout: int = 20):
+def gh(
+    endpoint: str,
+    *,
+    method: str = 'GET',
+    payload: dict | None = None,
+    timeout: int = 20,
+    api_version: str | None = None,
+    retry_auth: bool = True,
+):
     for attempt in range(2):
         ensure_fresh_token()
         argv = ['gh', 'api', '--method', method, endpoint]
+        if api_version:
+            argv.extend(['-H', f'X-GitHub-Api-Version: {api_version}'])
         if payload is not None:
             result = subprocess.run(
                 argv + ['--input', '-'],
@@ -237,7 +247,7 @@ def gh(endpoint: str, *, method: str = 'GET', payload: dict | None = None, timeo
             )
             if result.returncode:
                 detail = result.stderr[-1000:]
-                if attempt == 0 and ('HTTP 401' in detail or 'Bad credentials' in detail) and is_token_refresh_configured():
+                if retry_auth and attempt == 0 and ('HTTP 401' in detail or 'Bad credentials' in detail) and is_token_refresh_configured():
                     ensure_fresh_token(force=True)
                     continue
                 raise ReleaseError(f'GitHub {method} {endpoint}: {detail}')
@@ -246,7 +256,7 @@ def gh(endpoint: str, *, method: str = 'GET', payload: dict | None = None, timeo
                 result = run(argv, timeout=timeout)
             except ReleaseError as exc:
                 detail = str(exc)
-                if attempt == 0 and ('HTTP 401' in detail or 'Bad credentials' in detail) and is_token_refresh_configured():
+                if retry_auth and attempt == 0 and ('HTTP 401' in detail or 'Bad credentials' in detail) and is_token_refresh_configured():
                     ensure_fresh_token(force=True)
                     continue
                 raise

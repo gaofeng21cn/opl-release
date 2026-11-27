@@ -27,8 +27,13 @@ jobs:
   inventory:
     if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || vars.ENABLE_DAILY_CONTROL == 'true')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     outputs:
       subjects: ${{ steps.select.outputs.subjects }}
+      dispatch_subjects: ${{ steps.select.outputs.dispatch_subjects }}
+      control_created_at: ${{ steps.control-run.outputs.created_at }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -50,7 +55,17 @@ jobs:
               item['repository_name'] = item['repository'].split('/', 1)[1]
           with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
               fh.write('subjects=' + json.dumps(products) + '\n')
+              fh.write('dispatch_subjects=' + json.dumps([p for p in products if not p.get('observe_only')]) + '\n')
           PY
+      - name: Read the original controller run creation time
+        id: control-run
+        if: github.event_name == 'schedule'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          created_at="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at)"
+          printf 'created_at=%s\n' "$created_at" >> "$GITHUB_OUTPUT"
 
   prepare:
     needs: inventory
@@ -129,32 +144,72 @@ jobs:
           if-no-files-found: warn
           overwrite: true
 
-      - name: Dispatch explicitly admitted owner schedule
-        if: ${{ !matrix.subject.observe_only && (github.event_name == 'schedule' || inputs.apply) }}
+  dispatch-owner:
+    needs: inventory
+    if: github.event_name == 'schedule' && needs.inventory.outputs.dispatch_subjects != '[]'
+    name: Dispatch ${{ matrix.subject.subject_id }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        subject: ${{ fromJSON(needs.inventory.outputs.dispatch_subjects) }}
+    steps:
+      - name: Checkout opl-release controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: controller
+          persist-credentials: false
+
+      - name: Mint scoped owner Actions token
+        id: app_token
+        if: vars.PACKAGE_RELEASE_APP_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ vars.PACKAGE_RELEASE_APP_ID }}
+          private-key: ${{ secrets.PACKAGE_RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ matrix.subject.repository_name }}
+          permission-contents: read
+          permission-actions: ${{ github.run_attempt == 1 && 'write' || 'read' }}
+
+      - name: Checkout target repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ matrix.subject.repository }}
+          ref: main
+          path: owner
+          token: ${{ steps.app_token.outputs.token || github.token }}
+          persist-credentials: false
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+
+      - name: Dispatch or reconcile the declared owner lane
         env:
-          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
+          OWNER_DISPATCH_SCOPED_TOKEN: ${{ steps.app_token.outputs.token != '' }}
           PYTHONPATH: ${{ github.workspace }}/controller/src
           PYTHONDONTWRITEBYTECODE: '1'
           TARGET_REPOSITORY: ${{ matrix.subject.repository }}
           TARGET_SUBJECT_ID: ${{ matrix.subject.subject_id }}
+          CONTROL_CREATED_AT: ${{ needs.inventory.outputs.control_created_at }}
         run: |
-          set -euo pipefail
-          if [ -z "$GH_TOKEN" ]; then
-            echo "Owner workflow dispatch requires the scoped GitHub App installation token." >&2
-            exit 1
-          fi
           python3 -B -m opl_release dispatch-owner \
             --owner-root owner \
             --repository "$TARGET_REPOSITORY" \
             --subject-id "$TARGET_SUBJECT_ID" \
-            --control-run-id "$GITHUB_RUN_ID" \
             --output "$RUNNER_TEMP/owner-dispatch-result.json"
 
       - name: Retain owner dispatch receipt
-        if: always() && !matrix.subject.observe_only && (github.event_name == 'schedule' || inputs.apply)
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: opl-release-dispatch-${{ matrix.subject.subject_id }}-${{ github.run_id }}
+          name: opl-release-dispatch-${{ matrix.subject.subject_id }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/owner-dispatch-result.json
           if-no-files-found: warn
-          overwrite: true

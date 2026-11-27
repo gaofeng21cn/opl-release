@@ -1,108 +1,121 @@
-"""Owner-workflow dispatch with a durable controller-run correlation key."""
+"""Daily owner-workflow dispatch and GitHub run reconciliation."""
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
+import re
+from subprocess import TimeoutExpired
 import time
+from urllib.parse import urlencode
 
 from .common import ReleaseError, gh
 from .config import load_release_config_from_dir
 
-
-def _parse_time(value: str | None) -> float | None:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
-    except ValueError:
-        return None
+DISPATCH_ACTOR_ID = 356454848
+DISPATCH_INPUT = 'opl_release_control_run_id'
+DISPATCH_REF = 'main'
+DISPATCH_API_VERSION = '2026-03-10'
+API_FAILURES = (ReleaseError, TimeoutExpired, ValueError, OSError)
 
 
-def _run_matches(run: dict, *, control_run_id: str, workflow: str, ref: str, dispatched_at: float) -> bool:
-    if run.get('path') and run['path'].rsplit('/', 1)[-1] != workflow:
-        return False
-    if run.get('event') != 'workflow_dispatch':
-        return False
-    if run.get('head_branch') != ref:
-        return False
-    created_at = _parse_time(run.get('created_at'))
-    if created_at is not None and created_at + 5 < dispatched_at:
-        return False
-    markers = (
-        f'opl-release:{control_run_id}',
-        f'opl-release control run {control_run_id}',
+def _matches(run: dict, workflow: str, control_run_id: str) -> bool:
+    return (
+        run.get('path') == f'.github/workflows/{workflow}'
+        and run.get('event') == 'workflow_dispatch'
+        and run.get('head_branch') == DISPATCH_REF
+        and (run.get('actor') or {}).get('id') == DISPATCH_ACTOR_ID
+        and f'[opl-release:{control_run_id}]' in (run.get('display_title') or '')
+        and type(run.get('id')) is int and run['id'] > 0
     )
-    title = str(run.get('display_title', ''))
-    name = str(run.get('name', ''))
-    return any(marker in title or marker in name for marker in markers)
 
 
-def dispatch_owner_workflow(
+def _readback(repository: str, workflow: str, control_run_id: str, created_at: str) -> list[dict]:
+    endpoint = f'repos/{repository}/actions/workflows/{workflow}/runs'
+    filters = urlencode({
+        'branch': DISPATCH_REF,
+        'event': 'workflow_dispatch',
+        'created': f'>={created_at}',
+        'per_page': 100,
+    })
+    matches = {}
+    for page in range(1, 11):
+        response = gh(f'{endpoint}?{filters}&page={page}')
+        runs = response.get('workflow_runs') if isinstance(response, dict) else None
+        if not isinstance(runs, list):
+            raise ReleaseError('GitHub workflow history response has no workflow_runs array')
+        for run in runs:
+            if _matches(run, workflow, control_run_id):
+                matches[run['id']] = run
+        if len(matches) > 1 or len(runs) < 100 or response.get('total_count') == page * 100:
+            return list(matches.values())
+    raise ReleaseError('GitHub workflow history exceeded the filtered 1,000-run limit')
+
+
+def _binding(status: str, run: dict) -> dict:
+    return {'status': status, 'workflow_run_id': run['id'], 'run_url': run.get('html_url')}
+
+
+def _dispatch_once(
     repository: str,
-    spec: dict,
+    workflow: str,
+    control_run_id: str,
     *,
-    control_run_id: str | int,
-    reconcile_seconds: int = 60,
+    attempt: int,
+    created_at: str,
+    scoped_token: bool,
+    reconcile_seconds: int,
 ) -> dict:
-    """Dispatch one explicitly admitted owner lane and bind the resulting run.
+    try:
+        existing = _readback(repository, workflow, control_run_id, created_at)
+    except API_FAILURES as exc:
+        return {'status': 'unknown', 'reason': f'Owner run preflight failed: {exc}'}
+    if len(existing) > 1:
+        return {'status': 'unknown', 'reason': 'Multiple owner runs match the controller run'}
+    if existing:
+        return _binding('already_dispatched', existing[0])
+    if attempt > 1:
+        return {'status': 'unknown', 'reason': 'No matching owner run found on read-only controller rerun'}
+    if not scoped_token:
+        return {'status': 'dispatch_unavailable', 'reason': 'Scoped package-release GitHub App token unavailable'}
 
-    The owner workflow must echo a controller marker in its run-name and accept
-    the configured input. An empty dispatch response is reconciled by that
-    marker and never by selecting the newest run.
-    """
-    if spec.get('enabled') is not True:
-        raise ReleaseError('Owner dispatch is not explicitly enabled')
-    repository = str(repository)
-    workflow = str(spec.get('workflow', ''))
-    ref = str(spec.get('ref', 'main')).strip()
-    input_name = str(spec.get('control_run_id_input', ''))
-    if not workflow or not ref or not input_name:
-        raise ReleaseError('Owner dispatch is missing workflow, ref, or control input')
-    marker_id = str(control_run_id)
-    inputs = dict(spec.get('inputs') or {})
-    inputs[input_name] = marker_id
-    dispatched_at = time.time()
-    response = gh(
-        f'repos/{repository}/actions/workflows/{workflow}/dispatches',
-        method='POST',
-        payload={'ref': ref, 'inputs': inputs},
-    )
-    if isinstance(response, dict):
-        run_id = response.get('workflow_run_id') or response.get('id')
-        if run_id:
-            return {
-                'status': 'dispatch_submitted',
-                'repository': repository,
-                'workflow': workflow,
-                'ref': ref,
-                'control_run_id': marker_id,
-                'workflow_run_id': int(run_id),
-                'run_url': response.get('run_url') or response.get('html_url'),
-            }
+    dispatch_error = None
+    reported_id = None
+    try:
+        response = gh(
+            f'repos/{repository}/actions/workflows/{workflow}/dispatches',
+            method='POST',
+            payload={'ref': DISPATCH_REF, 'inputs': {DISPATCH_INPUT: control_run_id}},
+            api_version=DISPATCH_API_VERSION,
+            retry_auth=False,
+        )
+        if isinstance(response, dict) and type(response.get('workflow_run_id')) is int:
+            reported_id = response['workflow_run_id']
+    except API_FAILURES as exc:
+        dispatch_error = str(exc)
 
-    deadline = time.monotonic() + max(0, reconcile_seconds)
+    deadline = time.monotonic() + reconcile_seconds
     while True:
-        runs = gh(f'repos/{repository}/actions/workflows/{workflow}/runs?event=workflow_dispatch&per_page=50') or {}
-        matches = [
-            run for run in runs.get('workflow_runs', [])
-            if _run_matches(run, control_run_id=marker_id, workflow=workflow, ref=ref, dispatched_at=dispatched_at)
-        ]
-        if len(matches) == 1:
-            run = matches[0]
+        try:
+            if reported_id is not None:
+                run = gh(f'repos/{repository}/actions/runs/{reported_id}')
+                if isinstance(run, dict) and run.get('id') == reported_id and _matches(run, workflow, control_run_id):
+                    return _binding('dispatch_submitted', run)
+            else:
+                matches = _readback(repository, workflow, control_run_id, created_at)
+                if len(matches) > 1:
+                    return {'status': 'unknown', 'reason': 'Multiple owner runs match the controller run'}
+                if matches:
+                    return _binding('dispatch_submitted', matches[0])
+        except API_FAILURES as exc:
+            dispatch_error = dispatch_error or str(exc)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
             return {
-                'status': 'dispatch_submitted',
-                'repository': repository,
-                'workflow': workflow,
-                'ref': ref,
-                'control_run_id': marker_id,
-                'workflow_run_id': run.get('id'),
-                'run_url': run.get('html_url'),
+                'status': 'unknown',
+                'reason': 'Owner run could not be confirmed after dispatch',
+                **({'api_error': dispatch_error} if dispatch_error else {}),
+                **({'reported_run_id': reported_id} if reported_id is not None else {}),
             }
-        if len(matches) > 1:
-            raise ReleaseError('Owner dispatch correlation is ambiguous; no retry was attempted')
-        if time.monotonic() >= deadline:
-            raise ReleaseError('Owner dispatch result is unknown; no retry was attempted')
-        time.sleep(5)
+        time.sleep(min(5, remaining))
 
 
 def dispatch_configured_owner(
@@ -110,34 +123,35 @@ def dispatch_configured_owner(
     *,
     expected_repository: str,
     expected_subject_id: str,
-    control_run_id: str | int,
+    control_run_id: str,
+    control_created_at: str,
+    attempt: int,
+    event: str,
+    scoped_token: bool,
     reconcile_seconds: int = 60,
 ) -> dict:
-    """Dispatch an owner workflow only when its primary lane opts in."""
+    """Dispatch the declared lane, preserving a readback on controller reruns."""
+    if not re.fullmatch(r'[1-9][0-9]*', control_run_id) or attempt < 1:
+        raise ReleaseError('Owner dispatch requires a numeric GitHub run ID and attempt')
     cfg = load_release_config_from_dir(owner_root)
     if cfg['repository'] != expected_repository or cfg['subject_id'] != expected_subject_id:
         raise ReleaseError('Owner release config identity does not match the selected fleet subject')
-    if cfg['schedule'] != 'owner_schedule':
-        return {
-            'status': 'not_configured',
-            'repository': cfg['repository'],
-            'subject_id': cfg['subject_id'],
-            'reason': 'schedule is not owner_schedule',
-        }
-    lanes = [lane for lane in cfg['lanes'] if lane.get('daily_dispatch')]
-    if not lanes:
-        return {
-            'status': 'not_configured',
-            'repository': cfg['repository'],
-            'subject_id': cfg['subject_id'],
-            'reason': 'primary lane has no daily_dispatch declaration',
-        }
-    lane = lanes[0]
-    spec = dict(lane['daily_dispatch'])
-    spec['workflow'] = lane['workflow']
-    return dispatch_owner_workflow(
-        cfg['repository'],
-        spec,
-        control_run_id=control_run_id,
-        reconcile_seconds=reconcile_seconds,
+    receipt = {
+        'repository': cfg['repository'],
+        'subject_id': cfg['subject_id'],
+        'control_run_id': control_run_id,
+        'control_run_attempt': attempt,
+    }
+    lane = next((lane for lane in cfg['lanes'] if lane.get('daily_dispatch')), None)
+    if lane is None:
+        return {**receipt, 'status': 'not_configured'}
+    receipt.update(lane=lane['lane'], workflow=lane['workflow'], ref=DISPATCH_REF)
+    if event != 'schedule':
+        return {**receipt, 'status': 'not_scheduled'}
+    if not re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z', control_created_at):
+        return {**receipt, 'status': 'dispatch_unavailable', 'reason': 'Original controller creation time unavailable'}
+    result = _dispatch_once(
+        cfg['repository'], lane['workflow'], control_run_id, attempt=attempt,
+        created_at=control_created_at, scoped_token=scoped_token, reconcile_seconds=reconcile_seconds,
     )
+    return {**receipt, **result}

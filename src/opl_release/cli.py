@@ -61,8 +61,6 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch.add_argument('--owner-root', type=Path, required=True)
     dispatch.add_argument('--repository', required=True)
     dispatch.add_argument('--subject-id', required=True)
-    dispatch.add_argument('--control-run-id', required=True)
-    dispatch.add_argument('--reconcile-seconds', type=int, default=60)
     dispatch.add_argument('--output', type=Path, required=True)
 
     obs = sub.add_parser('observe', help='Read-only fleet observation across products and opl-catalog')
@@ -116,7 +114,6 @@ def main(argv: list[str] | None = None) -> int:
                 channel['tag_pattern'] = args.tag_pattern
             elif args.kind == 'sparkle_appcast':
                 channel.update({'asset': args.asset, 'release_tag': args.release_tag})
-            import json
             print(json.dumps(probe_channel(args.repository, channel), indent=2))
             return 0
 
@@ -125,22 +122,26 @@ def main(argv: list[str] | None = None) -> int:
             result = prepare_repository(args.owner_root, apply=args.apply)
             if args.output:
                 write_json(args.output, result)
-            import json
             print(json.dumps(result, indent=2))
             return 0
 
         if args.command == 'dispatch-owner':
-            configure_token_refresh_from_env()
+            run_attempt = os.environ.get('GITHUB_RUN_ATTEMPT', '')
+            if not run_attempt.isascii() or not run_attempt.isdecimal():
+                raise ReleaseError('Owner dispatch requires GITHUB_RUN_ATTEMPT')
             result = dispatch_configured_owner(
                 args.owner_root,
                 expected_repository=args.repository,
                 expected_subject_id=args.subject_id,
-                control_run_id=args.control_run_id,
-                reconcile_seconds=args.reconcile_seconds,
+                control_run_id=os.environ.get('GITHUB_RUN_ID', ''),
+                control_created_at=os.environ.get('CONTROL_CREATED_AT', ''),
+                attempt=int(run_attempt),
+                event=os.environ.get('GITHUB_EVENT_NAME', ''),
+                scoped_token=os.environ.get('OWNER_DISPATCH_SCOPED_TOKEN') == 'true',
             )
             write_json(args.output, result)
             print(json.dumps(result, indent=2))
-            return 0
+            return int(result['status'] in ('unknown', 'dispatch_unavailable'))
 
         if args.command == 'observe':
             report = observe_fleet(args.fleet, subject_filter=args.subject_id or None)

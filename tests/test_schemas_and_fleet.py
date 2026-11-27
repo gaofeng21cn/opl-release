@@ -57,43 +57,34 @@ class SchemaAndFleetTests(unittest.TestCase):
         self.assertEqual(norm_pkg['lanes'][0]['channel']['kind'], 'oci')
         self.assertEqual(norm_pkg['lanes'][1]['workflow'], 'native.yml')
 
-    def test_owner_schedule_dispatch_belongs_to_primary_lane(self):
+    def test_owner_dispatch_can_coexist_with_daily_patch_on_an_observed_lane(self):
         cfg = normalize_release_config({
             'schema_version': 'opl.release.v1',
             'subject_id': 'owner-product',
             'kind': 'product',
             'repository': 'gaofeng21cn/owner-product',
-            'schedule': 'owner_schedule',
-            'lanes': [{
-                'lane': 'stable',
-                'workflow': 'stable.yml',
-                'primary': True,
-                'daily_dispatch': {
-                    'enabled': True,
-                    'control_run_id_input': 'control',
-                },
-            }],
+            'schedule': 'daily_patch',
+            'lanes': [
+                {'lane': 'stable', 'workflow': 'stable.yml', 'primary': True},
+                {'lane': 'nightly', 'workflow': 'nightly.yml', 'daily_dispatch': True},
+            ],
         })
-        self.assertEqual(cfg['lanes'][0]['daily_dispatch']['control_run_id_input'], 'control')
+        self.assertTrue(cfg['lanes'][1]['daily_dispatch'])
 
-    def test_daily_dispatch_is_rejected_outside_primary_owner_lane(self):
-        with self.assertRaisesRegex(Exception, 'primary lane'):
+    def test_rejects_multiple_daily_dispatch_lanes(self):
+        with self.assertRaisesRegex(Exception, 'Only one lane'):
             normalize_release_config({
                 'schema_version': 'opl.release.v1',
                 'subject_id': 'owner-product',
                 'kind': 'product',
                 'repository': 'gaofeng21cn/owner-product',
                 'schedule': 'owner_schedule',
-                'lanes': [{
-                    'lane': 'stable',
-                    'workflow': 'stable.yml',
-                    'primary': False,
-                    'daily_dispatch': {
-                        'enabled': True,
-                        'control_run_id_input': 'control',
-                    },
-                }],
+                'lanes': [
+                    {'lane': 'stable', 'workflow': 'stable.yml', 'primary': True, 'daily_dispatch': True},
+                    {'lane': 'nightly', 'workflow': 'nightly.yml', 'daily_dispatch': True},
+                ],
             })
+
 
 if __name__ == '__main__':
     unittest.main()

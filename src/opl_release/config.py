@@ -79,24 +79,8 @@ def _validate_v1(cfg: dict) -> dict:
             raise ReleaseError(f'Invalid lane workflow: {workflow!r}')
         seen_lanes.add(lane_id)
         entry = dict(item)
-        dispatch = entry.get('daily_dispatch')
-        if dispatch is not None:
-            if cfg.get('schedule') != 'owner_schedule':
-                raise ReleaseError('daily_dispatch requires owner_schedule')
-            if not entry.get('primary'):
-                raise ReleaseError('daily_dispatch is allowed only on the primary lane')
-            if not isinstance(dispatch, dict) or dispatch.get('enabled') is not True:
-                raise ReleaseError('daily_dispatch must explicitly enable an owner lane')
-            if set(dispatch) - {'enabled', 'ref', 'control_run_id_input', 'inputs'}:
-                raise ReleaseError('daily_dispatch contains unsupported fields')
-            if not isinstance(dispatch.get('ref', 'main'), str) or not dispatch.get('ref', 'main').strip():
-                raise ReleaseError('Invalid daily_dispatch ref')
-            control_input = dispatch.get('control_run_id_input', '')
-            if not isinstance(control_input, str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', control_input):
-                raise ReleaseError('Invalid daily_dispatch control input')
-            inputs = dispatch.get('inputs', {})
-            if not isinstance(inputs, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in inputs.items()):
-                raise ReleaseError('daily_dispatch inputs must be string key/value pairs')
+        if 'daily_dispatch' in entry and entry['daily_dispatch'] is not True:
+            raise ReleaseError('daily_dispatch must be true when declared')
         if 'channel' in entry and entry['channel'] is not None:
             entry['channel'] = _normalize_channel(entry['channel'], repository=repo)
         normalized_lanes.append(entry)
@@ -124,7 +108,7 @@ def _from_legacy_product_release(raw: dict) -> dict:
     }
     if raw.get('publisher_title_from_tag'):
         primary_lane['title_from_tag'] = raw['publisher_title_from_tag']
-    if raw.get('daily_dispatch'):
+    if 'daily_dispatch' in raw:
         primary_lane['daily_dispatch'] = raw['daily_dispatch']
     if raw.get('publication_stage') == 'candidate_until_device_qualification':
         primary_lane['qualification_required'] = True
@@ -140,7 +124,7 @@ def _from_legacy_product_release(raw: dict) -> dict:
             'workflow': obs['workflow'],
             'primary': False,
         }
-        for field in ('event', 'match', 'title_pattern', 'title_from_tag'):
+        for field in ('event', 'match', 'title_pattern', 'title_from_tag', 'daily_dispatch'):
             if field in obs:
                 lane_entry[field] = obs[field]
         if obs.get('receipt'):
