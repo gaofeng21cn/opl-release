@@ -32,6 +32,8 @@ def plan_candidate(root: Path, cfg: dict, published: dict | None) -> dict:
     current = read_declared_version(root, cfg.get('version_files', []))
     if published and published.get('source_commit'):
         pub_version = published.get('version') or '0.0.0'
+        if published.get('kind') == 'github_release':
+            pub_version = pub_version.removesuffix(cfg.get('tag_suffix', ''))
         version_tuple(pub_version)
         if run(['git', 'merge-base', '--is-ancestor', published['source_commit'], head], cwd=root, check=False).returncode:
             raise ReleaseError('Published source commit is not an ancestor of main')
