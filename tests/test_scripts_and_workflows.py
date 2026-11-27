@@ -29,6 +29,10 @@ class ScriptsAndWorkflowsTests(unittest.TestCase):
         self.assertNotIn('contents: write', observe_wf)
         self.assertNotIn('actions: write', observe_wf)
 
+        control_wf = (ROOT / '.github/workflows/control-daily-releases.yml').read_text(encoding='utf-8')
+        self.assertIn('repositories: ${{ matrix.subject.repository_name }}', control_wf)
+        self.assertNotIn('repositories: ${{ matrix.subject.repository }}', control_wf)
+
 
 if __name__ == '__main__':
     unittest.main()
