@@ -1,0 +1,63 @@
+name: Observe Daily OPL Releases
+
+on:
+  schedule:
+    - cron: '15 19 * * *'
+  workflow_dispatch:
+    inputs:
+      subject_id:
+        description: Optional subject_id from fleet.json to observe individually
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: opl-release-observe-${{ inputs.subject_id || 'all' }}
+  cancel-in-progress: false
+
+jobs:
+  observe:
+    name: Read-only fleet release readback
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+
+      - name: Observe products and catalog channels (zero secrets)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: src
+          PYTHONDONTWRITEBYTECODE: '1'
+          SUBJECT_ID: ${{ inputs.subject_id }}
+        run: |
+          args=()
+          if [ -n "$SUBJECT_ID" ]; then
+            args+=(--subject-id "$SUBJECT_ID")
+          fi
+          python3 -B -m opl_release observe \
+            --fleet fleet.json \
+            "${args[@]}" \
+            --output "$RUNNER_TEMP/fleet-release-report.json" \
+            --markdown-output "$RUNNER_TEMP/fleet-release-report.md"
+
+      - name: Retain read-only observation report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: opl-fleet-release-report-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/fleet-release-report.json
+            ${{ runner.temp }}/fleet-release-report.md
+          if-no-files-found: warn
+          overwrite: true
+          retention-days: 30

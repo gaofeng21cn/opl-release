@@ -1,0 +1,47 @@
+{
+  "schema_version": "opl.release-fleet.v1",
+  "owner": "gaofeng21cn",
+  "catalog_source": {
+    "repository": "gaofeng21cn/opl-catalog",
+    "ref": "main",
+    "index_path": "catalog-index.json",
+    "oci_registry": "ghcr.io",
+    "oci_namespace": "gaofeng21cn/one-person-lab-packages"
+  },
+  "products": [
+    {
+      "subject_id": "opl-framework",
+      "repository": "gaofeng21cn/one-person-lab"
+    },
+    {
+      "subject_id": "opl-codex-models",
+      "repository": "gaofeng21cn/opl-codex-models"
+    },
+    {
+      "subject_id": "opl-dsh",
+      "repository": "gaofeng21cn/opl-dsh",
+      "observe_only": true
+    },
+    {
+      "subject_id": "opl-fleet-cockpit",
+      "repository": "gaofeng21cn/opl-fleet-cockpit"
+    },
+    {
+      "subject_id": "opl-cloud",
+      "repository": "gaofeng21cn/one-person-lab-cloud"
+    },
+    {
+      "subject_id": "opl-netfleet",
+      "repository": "gaofeng21cn/opl-netfleet"
+    },
+    {
+      "subject_id": "opl-app",
+      "repository": "gaofeng21cn/one-person-lab-app",
+      "observe_only": true
+    },
+    {
+      "subject_id": "u60-pro-companion",
+      "repository": "gaofeng21cn/u60-pro-companion"
+    }
+  ]
+}

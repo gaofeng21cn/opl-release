@@ -1,0 +1,119 @@
+name: Control Daily OPL Releases
+
+on:
+  schedule:
+    - cron: '43 18 * * *'
+  workflow_dispatch:
+    inputs:
+      subject_id:
+        description: Optional subject_id from fleet.json
+        required: false
+        default: ''
+        type: string
+      apply:
+        description: Apply version preparation, release PR merge, tag freeze, or failed run retry
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: opl-release-control-${{ inputs.subject_id || 'fleet' }}
+  cancel-in-progress: false
+
+jobs:
+  inventory:
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || vars.ENABLE_DAILY_CONTROL == 'true')
+    runs-on: ubuntu-latest
+    outputs:
+      subjects: ${{ steps.select.outputs.subjects }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: select
+        env:
+          SUBJECT_ID: ${{ inputs.subject_id }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          products = json.loads(Path('fleet.json').read_text())['products']
+          selected = os.environ.get('SUBJECT_ID', '').strip()
+          if selected:
+              products = [p for p in products if p['subject_id'] == selected]
+              if not products:
+                  raise SystemExit(f'Unknown subject_id: {selected}')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
+              fh.write('subjects=' + json.dumps(products) + '\n')
+          PY
+
+  prepare:
+    needs: inventory
+    name: ${{ matrix.subject.subject_id }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        subject: ${{ fromJSON(needs.inventory.outputs.subjects) }}
+    concurrency:
+      group: opl-release-control-${{ matrix.subject.repository }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout opl-release controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: controller
+          persist-credentials: false
+
+      - name: Mint scoped repository write token when applying
+        id: app_token
+        if: ${{ !matrix.subject.observe_only && (github.event_name == 'schedule' || inputs.apply) && vars.PACKAGE_RELEASE_APP_ID != '' }}
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ vars.PACKAGE_RELEASE_APP_ID }}
+          private-key: ${{ secrets.PACKAGE_RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ matrix.subject.repository }}
+          permission-contents: write
+          permission-actions: write
+          permission-pull-requests: write
+          permission-workflows: write
+          permission-checks: read
+          permission-statuses: read
+
+      - name: Checkout target repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ matrix.subject.repository }}
+          ref: main
+          path: owner
+          fetch-depth: 0
+          token: ${{ steps.app_token.outputs.token || github.token }}
+          persist-credentials: false
+
+      - name: Plan or apply candidate release
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
+          APPLY: ${{ steps.app_token.outputs.token != '' }}
+          PYTHONPATH: ${{ github.workspace }}/controller/src
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          args=()
+          if [ "$APPLY" = true ]; then args+=(--apply); fi
+          python3 -B -m opl_release prepare \
+            --owner-root owner \
+            "${args[@]}" \
+            --output "$RUNNER_TEMP/prepare-result.json"
+
+      - name: Retain preparation artifact
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: opl-release-prepare-${{ matrix.subject.subject_id }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/prepare-result.json
+          if-no-files-found: warn
+          overwrite: true

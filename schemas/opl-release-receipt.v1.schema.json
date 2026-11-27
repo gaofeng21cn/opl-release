@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://onepersonlab.ai/schemas/opl-release-receipt.v1.schema.json",
+  "title": "OPL Release Receipt (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "subject_id", "lane", "stage", "recorded_at"],
+  "properties": {
+    "schema": { "const": "opl.release-receipt.v1" },
+    "subject_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$" },
+    "lane": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "stage": {
+      "enum": [
+        "unchanged",
+        "candidate_built",
+        "qualification_pending",
+        "qualification_failed",
+        "published",
+        "verified",
+        "blocked"
+      ]
+    },
+    "recorded_at": { "type": "string", "minLength": 1 },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": { "type": "string" },
+        "tag": { "type": "string" },
+        "commit": { "type": "string", "pattern": "^[a-f0-9]{40}$" }
+      }
+    },
+    "published": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": { "type": "string" },
+        "tag": { "type": "string" },
+        "ref": { "type": "string" },
+        "digest": { "type": "string" }
+      }
+    },
+    "qualification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "status"],
+      "properties": {
+        "required": { "type": "boolean" },
+        "status": { "enum": ["not_required", "pending", "passed", "failed"] },
+        "evidence_url": { "type": "string" }
+      }
+    },
+    "run_url": { "type": "string" },
+    "blocker": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

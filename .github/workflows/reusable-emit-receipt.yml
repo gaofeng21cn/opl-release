@@ -1,0 +1,126 @@
+name: Reusable Emit Release Receipt
+
+on:
+  workflow_call:
+    inputs:
+      subject_id:
+        required: true
+        type: string
+      lane:
+        required: true
+        type: string
+      stage:
+        required: true
+        type: string
+      version:
+        required: false
+        default: ''
+        type: string
+      tag:
+        required: false
+        default: ''
+        type: string
+      commit:
+        required: false
+        default: ''
+        type: string
+      published_version:
+        required: false
+        default: ''
+        type: string
+      published_tag:
+        required: false
+        default: ''
+        type: string
+      published_ref:
+        required: false
+        default: ''
+        type: string
+      published_digest:
+        required: false
+        default: ''
+        type: string
+      qualification_required:
+        required: false
+        default: false
+        type: boolean
+      qualification_status:
+        required: false
+        default: not_required
+        type: string
+      qualification_evidence_url:
+        required: false
+        default: ''
+        type: string
+      blocker_code:
+        required: false
+        default: ''
+        type: string
+      blocker_message:
+        required: false
+        default: ''
+        type: string
+      toolchain_ref:
+        required: false
+        default: v1
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  emit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout opl-release
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: gaofeng21cn/opl-release
+          ref: ${{ inputs.toolchain_ref }}
+          path: .opl-release
+          persist-credentials: false
+
+      - name: Emit standard opl.release-receipt.v1 JSON
+        env:
+          PYTHONPATH: .opl-release/src
+          PYTHONDONTWRITEBYTECODE: '1'
+          SUBJECT_ID: ${{ inputs.subject_id }}
+          LANE: ${{ inputs.lane }}
+          STAGE: ${{ inputs.stage }}
+          VERSION: ${{ inputs.version }}
+          TAG: ${{ inputs.tag }}
+          COMMIT: ${{ inputs.commit }}
+          PUB_VERSION: ${{ inputs.published_version }}
+          PUB_TAG: ${{ inputs.published_tag }}
+          PUB_REF: ${{ inputs.published_ref }}
+          PUB_DIGEST: ${{ inputs.published_digest }}
+          QUAL_REQUIRED: ${{ inputs.qualification_required }}
+          QUAL_STATUS: ${{ inputs.qualification_status }}
+          QUAL_URL: ${{ inputs.qualification_evidence_url }}
+          BLOCKER_CODE: ${{ inputs.blocker_code }}
+          BLOCKER_MSG: ${{ inputs.blocker_message }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          args=(--subject-id "$SUBJECT_ID" --lane "$LANE" --stage "$STAGE" --run-url "$RUN_URL" --output "$RUNNER_TEMP/release-receipt.json")
+          [ -n "$VERSION" ] && args+=(--version "$VERSION")
+          [ -n "$TAG" ] && args+=(--tag "$TAG")
+          [ -n "$COMMIT" ] && args+=(--commit "$COMMIT")
+          [ -n "$PUB_VERSION" ] && args+=(--published-version "$PUB_VERSION")
+          [ -n "$PUB_TAG" ] && args+=(--published-tag "$PUB_TAG")
+          [ -n "$PUB_REF" ] && args+=(--published-ref "$PUB_REF")
+          [ -n "$PUB_DIGEST" ] && args+=(--published-digest "$PUB_DIGEST")
+          if [ "$QUAL_REQUIRED" = true ]; then args+=(--qualification-required); fi
+          [ -n "$QUAL_STATUS" ] && args+=(--qualification-status "$QUAL_STATUS")
+          [ -n "$QUAL_URL" ] && args+=(--qualification-evidence-url "$QUAL_URL")
+          [ -n "$BLOCKER_CODE" ] && args+=(--blocker-code "$BLOCKER_CODE")
+          [ -n "$BLOCKER_MSG" ] && args+=(--blocker-message "$BLOCKER_MSG")
+          python3 -B -m opl_release emit-receipt "${args[@]}"
+
+      - name: Upload standard release receipt artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: opl-release-receipt-${{ inputs.subject_id }}-${{ inputs.lane }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/release-receipt.json
+          if-no-files-found: error
+          retention-days: 30
