@@ -6,14 +6,46 @@ import plistlib
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
+from opl_release.common import ReleaseError
 from opl_release.prepare import plan_candidate
+from opl_release.probes import probe_channel
 from opl_release.versioning import update_version_files
 
 
 class PrepareAndVersioningTests(unittest.TestCase):
     def _git(self, root: Path, *args: str) -> str:
         return subprocess.run(['git', *args], cwd=root, check=True, text=True, capture_output=True).stdout.strip()
+
+    def test_candidate_planning_strips_only_the_declared_github_release_suffix(self):
+        tag = 'v0.2.2-companion'
+        with patch('opl_release.probes.gh', side_effect=[{'tag_name': tag, 'html_url': 'release-url'}, {'sha': 'base'}]) as api:
+            published = probe_channel('owner/companion', {'kind': 'github_release'})
+        api.assert_called_with(f'repos/owner/companion/commits/{tag}')
+
+        cfg = {'tag_prefix': 'v', 'tag_suffix': '-companion', 'delivery_paths': ['app']}
+        with (
+            patch('opl_release.prepare.git', return_value='head'),
+            patch('opl_release.prepare.read_declared_version', return_value='0.2.2'),
+            patch('opl_release.prepare.delivery_changed', return_value=True),
+            patch('opl_release.prepare.run', side_effect=[subprocess.CompletedProcess([], 0), subprocess.CompletedProcess([], 1)]),
+        ):
+            result = plan_candidate(Path.cwd(), cfg, published)
+        self.assertEqual((result['status'], result['version'], result['tag']), ('needs_release', '0.2.3', 'v0.2.3-companion'))
+        self.assertEqual((published['tag'], published['version']), (tag, '0.2.2-companion'))
+
+        for mismatched_cfg, mismatched_channel in [
+            (dict(cfg, tag_suffix='-other'), published),
+            (cfg, dict(published, kind='oci')),
+        ]:
+            with (
+                self.subTest(tag_suffix=mismatched_cfg['tag_suffix'], channel=mismatched_channel['kind']),
+                patch('opl_release.prepare.git', return_value='head'),
+                patch('opl_release.prepare.read_declared_version', return_value='0.2.2'),
+                self.assertRaisesRegex(ReleaseError, 'Expected stable SemVer'),
+            ):
+                plan_candidate(Path.cwd(), mismatched_cfg, mismatched_channel)
 
     def test_plan_candidate_freezes_tag_and_resumes_across_doc_commits(self):
         with tempfile.TemporaryDirectory() as tmp:
