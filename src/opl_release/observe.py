@@ -11,6 +11,7 @@ import urllib.request
 
 from .common import ReleaseError, gh, read_json
 from .config import normalize_release_config, validate_fleet_manifest
+from .observe_dispatch import observe_dispatch
 from .probes import probe_channel, probe_oci
 from .receipts import fetch_run_receipt
 
@@ -220,6 +221,10 @@ def observe_fleet(fleet_path: Path, *, subject_filter: str | None = None) -> dic
             products.append(fut.result())
     order = {entry['subject_id']: idx for idx, entry in enumerate(targets)}
     products.sort(key=lambda row: order[row['subject_id']])
+    control_run, dispatch_rows = observe_dispatch(fleet.get('owner'), targets)
+    for product in products:
+        if dispatch := dispatch_rows.get(product['subject_id']):
+            product['central_dispatch'] = dispatch
 
     packages = {'status': 'skipped', 'packages': []} if subject_filter else _observe_catalog_packages(fleet.get('catalog_source'))
     return {
@@ -227,6 +232,7 @@ def observe_fleet(fleet_path: Path, *, subject_filter: str | None = None) -> dic
         'generated_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
         'products': products,
         'packages': packages,
+        **({'dispatch_controller': control_run} if control_run else {}),
     }
 
 
@@ -250,6 +256,27 @@ def render_markdown(report: dict) -> str:
                 pub_ver += ' (asset missing)'
             run_link = f"[Actions]({lane['run_url']})" if lane.get('run_url') else '—'
             lines.append(f"| `{prod['subject_id']}` | `{lane['lane']}` | `{lane['stage']}` | `{pub_ver}` | {run_link} |")
+
+    if controller := report.get('dispatch_controller'):
+        lines.extend(['', '### Central Daily Dispatch', ''])
+        if controller.get('run_url'):
+            state = controller.get('conclusion') or controller['status']
+            lines.extend([
+                f"[Scheduled controller run]({controller['run_url']}) created at "
+                f"`{controller['created_at']}` · attempt `{controller['run_attempt']}` · `{state}`", '',
+            ])
+        lines.extend([
+            '| Subject | Dispatch status | Receipt attempt | Owner run |',
+            '| --- | --- | --- | --- |',
+        ])
+        for product in report['products']:
+            dispatch = product.get('central_dispatch')
+            if dispatch:
+                owner_run = f"[Actions]({dispatch['run_url']})" if dispatch.get('run_url') else '—'
+                receipt_attempt = dispatch.get('control_run_attempt', '—')
+                lines.append(
+                    f"| `{product['subject_id']}` | `{dispatch['status']}` | {receipt_attempt} | {owner_run} |"
+                )
 
     pkgs = report.get('packages') or {}
     if pkgs.get('status') == 'ok':

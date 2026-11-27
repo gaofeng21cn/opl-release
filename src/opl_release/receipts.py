@@ -104,18 +104,29 @@ def fetch_run_receipt(repository: str, run: dict, subject_id: str, lane: str) ->
     matches = [row for row in artifacts if row['name'] == name and not row.get('expired')]
     if len(matches) != 1 or matches[0]['size_in_bytes'] > 1024 * 1024:
         return None
+    try:
+        data = download_json_artifact(repository, matches[0]['id'], 'release-receipt.json')
+        return validate_receipt(data, expected_subject_id=subject_id, expected_lane=lane)
+    except ReleaseError:
+        return None
+
+
+def download_json_artifact(repository: str, artifact_id: int, filename: str) -> dict:
     dl = subprocess.run(
-        ['gh', 'api', f"repos/{repository}/actions/artifacts/{matches[0]['id']}/zip"],
+        ['gh', 'api', f'repos/{repository}/actions/artifacts/{artifact_id}/zip'],
         capture_output=True,
         timeout=20,
     )
     if dl.returncode != 0:
-        return None
+        raise ReleaseError('Unable to download receipt artifact')
     try:
         with ZipFile(BytesIO(dl.stdout)) as zf:
-            if zf.namelist().count('release-receipt.json') != 1:
-                return None
-            data = json.loads(zf.read('release-receipt.json'))
-            return validate_receipt(data, expected_subject_id=subject_id, expected_lane=lane)
-    except (BadZipFile, KeyError, ValueError, ReleaseError):
-        return None
+            members = [entry for entry in zf.infolist() if entry.filename == filename]
+            if len(members) != 1 or members[0].file_size > 1024 * 1024:
+                raise ReleaseError('Receipt artifact has missing, duplicate, or oversized JSON')
+            data = json.loads(zf.read(members[0]))
+    except (BadZipFile, ValueError) as exc:
+        raise ReleaseError('Invalid receipt artifact') from exc
+    if not isinstance(data, dict):
+        raise ReleaseError('Receipt JSON must be an object')
+    return data
