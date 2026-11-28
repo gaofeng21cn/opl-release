@@ -20,7 +20,7 @@
 ## Security Boundary
 
 - **Read-only Observer (`observe-daily-releases.yml`)**: Requires only `contents: read` and `actions: read`. Holds zero GitHub App private keys, zero Apple certificates, and zero GHCR write scopes.
-- **Control Plane (`control-daily-releases.yml`)**: Isolated to `release-control` environment / `ENABLE_DAILY_CONTROL` opt-in guard. Private package repos execute `reusable-publish-package-v2.yml` from inside their own repositories with their own `GITHUB_TOKEN` and signing environments.
+- **Control Plane (`control-daily-releases.yml`)**: Isolated to `release-control` environment / `ENABLE_DAILY_CONTROL` opt-in guard. `one-person-lab` retains the GHCR-bound `one-person-lab-packages/*` publisher (`publish-package.yml`) invoked by both public and private package owner repositories with their own scoped tokens and signing environments; `opl-release` owns cross-product daily dispatch, read-only observation, `opl.release-receipt.v1`, and `reusable-macos-sparkle-release.yml`.
 
 ## Daily Owner Dispatch
 
