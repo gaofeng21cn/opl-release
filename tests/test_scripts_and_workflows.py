@@ -42,6 +42,9 @@ class ScriptsAndWorkflowsTests(unittest.TestCase):
         self.assertIn('application/vnd.onepersonlab.package.v1', pub_v2)
         self.assertIn('application/vnd.onepersonlab.package.source.v2+gzip', pub_v2)
         self.assertIn('application/vnd.onepersonlab.package.payload.v1+json', pub_v2)
+        self.assertIn('--verify-only', pub_v2)
+        self.assertIn('--expected-digest "$digest"', pub_v2)
+        self.assertIn('${image}:latest-stable', pub_v2)
         self.assertNotIn('application/vnd.onepersonlab.package.archive.v2+gzip', pub_v2)
         self.assertNotIn('application/vnd.onepersonlab.package.v2', pub_v2)
 
