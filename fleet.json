@@ -41,6 +41,11 @@
       "enable_owner_dispatch": true
     },
     {
+      "subject_id": "opl-fleet-agent",
+      "repository": "gaofeng21cn/opl-fleet-agent",
+      "observe_only": true
+    },
+    {
       "subject_id": "u60-pro-companion",
       "repository": "gaofeng21cn/u60-pro-companion"
     }

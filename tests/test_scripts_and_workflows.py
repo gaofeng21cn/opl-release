@@ -22,7 +22,7 @@ class ScriptsAndWorkflowsTests(unittest.TestCase):
 
     def test_workflows_do_not_reference_legacy_framework_pins_or_internal_src(self):
         workflows = sorted((ROOT / '.github/workflows').glob('*.yml'))
-        self.assertGreaterEqual(len(workflows), 8)
+        self.assertGreaterEqual(len(workflows), 6)
         for wf in workflows:
             text = wf.read_text(encoding='utf-8')
             self.assertNotIn('e73718a2a', text, f'Legacy pre-v2 pin leaked into {wf.name}')
@@ -48,15 +48,11 @@ class ScriptsAndWorkflowsTests(unittest.TestCase):
         self.assertIn('receipt_stage:', sparkle_wf)
         self.assertIn('overwrite: true', (ROOT / '.github/workflows/reusable-emit-receipt.yml').read_text(encoding='utf-8'))
 
-        pub_v2 = (ROOT / '.github/workflows/reusable-publish-package-v2.yml').read_text(encoding='utf-8')
-        self.assertIn('application/vnd.onepersonlab.package.v1', pub_v2)
-        self.assertIn('application/vnd.onepersonlab.package.source.v2+gzip', pub_v2)
-        self.assertIn('application/vnd.onepersonlab.package.payload.v1+json', pub_v2)
-        self.assertIn('--verify-only', pub_v2)
-        self.assertIn('--expected-digest "$digest"', pub_v2)
-        self.assertIn('${image}:latest-stable', pub_v2)
-        self.assertNotIn('application/vnd.onepersonlab.package.archive.v2+gzip', pub_v2)
-        self.assertNotIn('application/vnd.onepersonlab.package.v2', pub_v2)
+        for retired in ('reusable-publish-package-v2.yml', 'reusable-publish-oci.yml'):
+            self.assertFalse(
+                (ROOT / '.github/workflows' / retired).exists(),
+                f'Retired zero-caller workflow {retired} must remain removed',
+            )
 
     def test_owner_dispatch_inventory_requires_opt_in_without_changing_prepare_inventory(self):
         control_wf = (ROOT / '.github/workflows/control-daily-releases.yml').read_text(encoding='utf-8')
