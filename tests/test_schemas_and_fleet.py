@@ -16,6 +16,10 @@ class SchemaAndFleetTests(unittest.TestCase):
         self.assertEqual(validated['schema_version'], 'opl.release-fleet.v1')
         self.assertGreaterEqual(len(validated['products']), 8)
         self.assertIn('catalog_source', validated)
+        by_id = {row['subject_id']: row for row in validated['products']}
+        for subject_id in ('opl-framework', 'opl-app', 'opl-dsh'):
+            self.assertIs(by_id[subject_id].get('enable_owner_dispatch'), True)
+            self.assertFalse(by_id[subject_id].get('observe_only', False))
 
     def test_owner_dispatch_gate_rejects_string_values(self):
         fleet = json.loads((ROOT / 'fleet.json').read_text(encoding='utf-8'))

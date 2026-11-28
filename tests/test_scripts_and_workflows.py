@@ -38,6 +38,13 @@ class ScriptsAndWorkflowsTests(unittest.TestCase):
         self.assertIn('repositories: ${{ matrix.subject.repository_name }}', control_wf)
         self.assertNotIn('repositories: ${{ matrix.subject.repository }}', control_wf)
 
+        pub_v2 = (ROOT / '.github/workflows/reusable-publish-package-v2.yml').read_text(encoding='utf-8')
+        self.assertIn('application/vnd.onepersonlab.package.v1', pub_v2)
+        self.assertIn('application/vnd.onepersonlab.package.source.v2+gzip', pub_v2)
+        self.assertIn('application/vnd.onepersonlab.package.payload.v1+json', pub_v2)
+        self.assertNotIn('application/vnd.onepersonlab.package.archive.v2+gzip', pub_v2)
+        self.assertNotIn('application/vnd.onepersonlab.package.v2', pub_v2)
+
     def test_owner_dispatch_inventory_requires_opt_in_without_changing_prepare_inventory(self):
         control_wf = (ROOT / '.github/workflows/control-daily-releases.yml').read_text(encoding='utf-8')
         inventory = re.search(r"python3 -B - <<'PY'\n(.*?)\n +PY", control_wf, re.DOTALL)

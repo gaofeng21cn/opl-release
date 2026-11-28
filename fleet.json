@@ -11,7 +11,8 @@
   "products": [
     {
       "subject_id": "opl-framework",
-      "repository": "gaofeng21cn/one-person-lab"
+      "repository": "gaofeng21cn/one-person-lab",
+      "enable_owner_dispatch": true
     },
     {
       "subject_id": "opl-codex-models",
@@ -20,7 +21,7 @@
     {
       "subject_id": "opl-dsh",
       "repository": "gaofeng21cn/opl-dsh",
-      "observe_only": true
+      "enable_owner_dispatch": true
     },
     {
       "subject_id": "opl-fleet-cockpit",
@@ -37,7 +38,7 @@
     {
       "subject_id": "opl-app",
       "repository": "gaofeng21cn/one-person-lab-app",
-      "observe_only": true
+      "enable_owner_dispatch": true
     },
     {
       "subject_id": "u60-pro-companion",
