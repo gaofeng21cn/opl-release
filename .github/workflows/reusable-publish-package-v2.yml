@@ -149,8 +149,22 @@ jobs:
               "${payload}:application/vnd.onepersonlab.package.payload.v1+json" \
               "${lock}:application/vnd.onepersonlab.package.lock.v2+json")"
             digest="$(jq -er '.digest // .descriptor.digest' <<<"$pushed")"
-            oras tag "${image}@${digest}" latest-stable
           fi
+          oras tag "${image}@${digest}" latest-stable
+          verify_args=(
+            --artifact-type application/vnd.onepersonlab.package.v1
+            --source-url "$source_url"
+            --layer "${archive}=application/vnd.onepersonlab.package.source.v2+gzip"
+            --layer "${payload}=application/vnd.onepersonlab.package.payload.v1+json"
+            --layer "${lock}=application/vnd.onepersonlab.package.lock.v2+json"
+            --verify-only
+            --expected-digest "$digest"
+          )
+          if [ "$VISIBILITY" != authorized_only ]; then
+            verify_args+=(--anonymous)
+          fi
+          node .opl-release/scripts/oci-publication-preflight.mjs --ref "${image}@${digest}" "${verify_args[@]}"
+          node .opl-release/scripts/oci-publication-preflight.mjs --ref "${image}:latest-stable" "${verify_args[@]}"
           python3 -B -m opl_release emit-receipt \
             --subject-id "$PACKAGE_ID" \
             --lane oci \
