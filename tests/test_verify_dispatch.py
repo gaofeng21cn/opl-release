@@ -85,35 +85,39 @@ class VerifyDispatchTests(unittest.TestCase):
                 verify_central_dispatch(**self.base_kwargs)
 
     def test_cli_verify_dispatch_reads_github_env_and_exits_nonzero_on_bad_source(self):
-        env = {
-            'GITHUB_REPOSITORY': 'example/widget',
-            'GITHUB_EVENT_NAME': 'workflow_dispatch',
-            'GITHUB_REF': 'refs/heads/main',
-            'GITHUB_RUN_ATTEMPT': '1',
-            'GITHUB_ACTOR_ID': str(RELEASE_BOT_ID),
-            'GITHUB_RUN_ID': '9001',
-            'GITHUB_RUN_NUMBER': '15',
-        }
-        with patch.dict('os.environ', env, clear=False), \
-             patch('opl_release.verify_dispatch.gh', side_effect=[self.control_run, {'total_count': 1, 'workflow_runs': []}]):
-            code = cli.main([
-                'verify-dispatch',
-                '--control-run-id', '4200',
-                '--workflow', 'nightly.yml',
-                '--expected-title', 'Widget Nightly [opl-release:4200]',
-            ])
-        self.assertEqual(code, 0)
+        with tempfile.TemporaryDirectory() as tmp:
+            ev = Path(tmp) / 'event.json'
+            ev.write_text(json.dumps({'sender': {'id': RELEASE_BOT_ID}}), encoding='utf-8')
+            env = {
+                'GITHUB_REPOSITORY': 'example/widget',
+                'GITHUB_EVENT_NAME': 'workflow_dispatch',
+                'GITHUB_REF': 'refs/heads/main',
+                'GITHUB_RUN_ATTEMPT': '1',
+                'GITHUB_ACTOR_ID': str(RELEASE_BOT_ID),
+                'GITHUB_RUN_ID': '9001',
+                'GITHUB_RUN_NUMBER': '15',
+                'GITHUB_EVENT_PATH': str(ev),
+            }
+            with patch.dict('os.environ', env, clear=False), \
+                 patch('opl_release.verify_dispatch.gh', side_effect=[self.control_run, {'total_count': 1, 'workflow_runs': []}]):
+                code = cli.main([
+                    'verify-dispatch',
+                    '--control-run-id', '4200',
+                    '--workflow', 'nightly.yml',
+                    '--expected-title', 'Widget Nightly [opl-release:4200]',
+                ])
+            self.assertEqual(code, 0)
 
-        bad_source = {**self.control_run, 'event': 'workflow_dispatch'}
-        with patch.dict('os.environ', env, clear=False), \
-             patch('opl_release.verify_dispatch.gh', return_value=bad_source):
-            code = cli.main([
-                'verify-dispatch',
-                '--control-run-id', '4200',
-                '--workflow', 'nightly.yml',
-                '--expected-title', 'Widget Nightly [opl-release:4200]',
-            ])
-        self.assertEqual(code, 1)
+            bad_source = {**self.control_run, 'event': 'workflow_dispatch'}
+            with patch.dict('os.environ', env, clear=False), \
+                 patch('opl_release.verify_dispatch.gh', return_value=bad_source):
+                code = cli.main([
+                    'verify-dispatch',
+                    '--control-run-id', '4200',
+                    '--workflow', 'nightly.yml',
+                    '--expected-title', 'Widget Nightly [opl-release:4200]',
+                ])
+            self.assertEqual(code, 1)
 
 
 if __name__ == '__main__':
