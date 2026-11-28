@@ -1,0 +1,34 @@
+name: Verify Central Daily Dispatch
+description: Verify via authenticated GitHub API that an owner workflow run was uniquely dispatched by opl-release main schedule.
+
+inputs:
+  control_run_id:
+    description: Scheduled controller run ID passed via opl_release_control_run_id
+    required: true
+  workflow:
+    description: Receiver workflow filename in the calling repository (for example stable-release.yml)
+    required: true
+  expected_title:
+    description: Exact expected display_title including [opl-release:<id>] marker
+    required: true
+  gh_token:
+    description: Authenticated GitHub token passed to gh CLI
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Verify central dispatch provenance and uniqueness
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.gh_token }}
+        CONTROL_RUN_ID: ${{ inputs.control_run_id }}
+        RECEIVER_WORKFLOW: ${{ inputs.workflow }}
+        EXPECTED_TITLE: ${{ inputs.expected_title }}
+        PYTHONPATH: ${{ github.action_path }}/../../src
+        PYTHONDONTWRITEBYTECODE: '1'
+      run: |
+        python3 -B -m opl_release verify-dispatch \
+          --control-run-id "$CONTROL_RUN_ID" \
+          --workflow "$RECEIVER_WORKFLOW" \
+          --expected-title "$EXPECTED_TITLE"

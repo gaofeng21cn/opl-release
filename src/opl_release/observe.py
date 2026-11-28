@@ -47,10 +47,25 @@ def _fetch_product_config(entry: dict) -> dict:
     raise ReleaseError(f'Missing .opl-release.json or product-release.json in {repo}')
 
 
-def _select_lane_run(repository: str, lane: dict, primary_tag: str | None, primary_commit: str | None) -> dict | None:
+def _select_lane_run(
+    repository: str,
+    lane: dict,
+    primary_tag: str | None,
+    primary_commit: str | None,
+    *,
+    preferred_run_id: int | None = None,
+) -> dict | None:
     event = lane.get('event')
     query = f"per_page=40{'&event=' + event if event else ''}"
     runs = gh(f"repos/{repository}/actions/workflows/{lane['workflow']}/runs?{query}")['workflow_runs']
+    if preferred_run_id:
+        try:
+            preferred = gh(f'repos/{repository}/actions/runs/{preferred_run_id}')
+            if isinstance(preferred, dict) and preferred.get('path') == f".github/workflows/{lane['workflow']}":
+                if all(r.get('id') != preferred.get('id') for r in runs):
+                    runs = [*runs, preferred]
+        except Exception:
+            pass
     if title_pat := lane.get('title_pattern'):
         runs = [r for r in runs if re.search(title_pat, r.get('display_title', ''))]
     match_mode = lane.get('match')
@@ -64,6 +79,12 @@ def _select_lane_run(repository: str, lane: dict, primary_tag: str | None, prima
         if primary_tag:
             expected_title = title_from_tag.replace('{tag}', primary_tag)
             runs = [r for r in runs if r.get('display_title') == expected_title]
+    active_runs = [
+        r for r in runs
+        if not (r.get('event') == 'schedule' and r.get('status') == 'completed' and r.get('conclusion') == 'skipped')
+    ]
+    if active_runs:
+        runs = active_runs
     return max(runs, key=lambda r: r['id']) if runs else None
 
 
@@ -78,7 +99,16 @@ def _run_stage(run: dict, lane: dict) -> str:
     return 'publisher_success'
 
 
-def _observe_lane(subject_id: str, repository: str, lane: dict, primary_tag: str | None, primary_commit: str | None) -> dict:
+def _observe_lane(
+    subject_id: str,
+    repository: str,
+    lane: dict,
+    primary_tag: str | None,
+    primary_commit: str | None,
+    *,
+    tag_prefix: str = 'v',
+    preferred_run_id: int | None = None,
+) -> dict:
     row: dict = {
         'subject_id': subject_id,
         'lane': lane['lane'],
@@ -87,33 +117,37 @@ def _observe_lane(subject_id: str, repository: str, lane: dict, primary_tag: str
     }
     try:
         if channel := lane.get('channel'):
-            channel_info = probe_channel(repository, channel)
+            channel_info = probe_channel(repository, channel, tag_prefix=tag_prefix)
             row['published_channel'] = channel_info
     except Exception as exc:
         row['channel_error'] = f'{type(exc).__name__}: {exc}'
 
     try:
-        run = _select_lane_run(repository, lane, primary_tag, primary_commit)
+        run = _select_lane_run(repository, lane, primary_tag, primary_commit, preferred_run_id=preferred_run_id)
         if run:
             row['run_id'] = run['id']
             row['run_url'] = run['html_url']
             row['run_commit'] = run['head_sha']
+            if run.get('created_at'):
+                row['run_created_at'] = run['created_at']
             receipt = fetch_run_receipt(repository, run, subject_id, lane['lane']) if run['status'] == 'completed' else None
             if receipt:
                 row['receipt'] = receipt
                 row['stage'] = receipt['stage']
+                if cand_ver := (receipt.get('candidate') or {}).get('version'):
+                    row['candidate_version'] = cand_ver
             else:
                 row['stage'] = _run_stage(run, lane)
                 pub = row.get('published_channel') or {}
                 if row['stage'] == 'publisher_success' and pub.get('status') == 'present':
-                    if pub.get('source_commit') and pub['source_commit'] == run['head_sha']:
+                    if pub.get('source_commit') == run['head_sha'] or run['head_sha'] in (pub.get('parent_commits') or []):
                         row['stage'] = 'verified'
     except Exception as exc:
         row['observation_error'] = f'{type(exc).__name__}: {exc}'
     return row
 
 
-def _observe_product(entry: dict) -> dict:
+def _observe_product(entry: dict, dispatch_row: dict | None = None) -> dict:
     sid = entry['subject_id']
     repo = entry['repository']
     try:
@@ -121,8 +155,18 @@ def _observe_product(entry: dict) -> dict:
     except Exception as exc:
         return {'subject_id': sid, 'repository': repo, 'status': 'unavailable', 'error': str(exc), 'lanes': []}
 
+    tag_prefix = cfg.get('tag_prefix', 'v')
+    preferred_id = (
+        dispatch_row.get('workflow_run_id')
+        if dispatch_row and dispatch_row.get('status') in {'dispatch_submitted', 'already_dispatched'}
+        else None
+    )
     primary = next((l for l in cfg['lanes'] if l.get('primary')), cfg['lanes'][0])
-    primary_row = _observe_lane(sid, repo, primary, None, None)
+    primary_row = _observe_lane(
+        sid, repo, primary, None, None,
+        tag_prefix=tag_prefix,
+        preferred_run_id=preferred_id if primary.get('daily_dispatch') else None,
+    )
     pub = primary_row.get('published_channel') or {}
     primary_tag = pub.get('tag')
     primary_commit = pub.get('source_commit')
@@ -131,7 +175,11 @@ def _observe_product(entry: dict) -> dict:
     for lane in cfg['lanes']:
         if lane['lane'] == primary['lane']:
             continue
-        lanes.append(_observe_lane(sid, repo, lane, primary_tag, primary_commit))
+        lanes.append(_observe_lane(
+            sid, repo, lane, primary_tag, primary_commit,
+            tag_prefix=tag_prefix,
+            preferred_run_id=preferred_id if lane.get('daily_dispatch') else None,
+        ))
 
     stages = {l['stage'] for l in lanes}
     if any(l.get('observation_error') or l.get('channel_error') for l in lanes):
@@ -214,14 +262,17 @@ def observe_fleet(fleet_path: Path, *, subject_filter: str | None = None) -> dic
     if subject_filter and not targets:
         raise ReleaseError(f'Unknown subject_id in fleet: {subject_filter}')
 
+    control_run, dispatch_rows = observe_dispatch(fleet.get('owner'), targets)
     products: list[dict] = []
     with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = {pool.submit(_observe_product, entry): entry['subject_id'] for entry in targets}
+        futures = {
+            pool.submit(_observe_product, entry, dispatch_row=dispatch_rows.get(entry['subject_id'])): entry['subject_id']
+            for entry in targets
+        }
         for fut in as_completed(futures):
             products.append(fut.result())
     order = {entry['subject_id']: idx for idx, entry in enumerate(targets)}
     products.sort(key=lambda row: order[row['subject_id']])
-    control_run, dispatch_rows = observe_dispatch(fleet.get('owner'), targets)
     for product in products:
         if dispatch := dispatch_rows.get(product['subject_id']):
             product['central_dispatch'] = dispatch
@@ -236,26 +287,80 @@ def observe_fleet(fleet_path: Path, *, subject_filter: str | None = None) -> dic
     }
 
 
+def _short_timestamp(value: str | None) -> str:
+    if not value or not isinstance(value, str):
+        return '—'
+    if len(value) >= 16 and value[4] == '-' and value[10] == 'T':
+        return f'{value[5:10]} {value[11:16]}Z'
+    return value
+
+
 def render_markdown(report: dict) -> str:
+    products = report.get('products', [])
+    pkgs = report.get('packages') or {}
+    healthy = sum(1 for p in products if p.get('status') == 'healthy')
+    attention = sum(1 for p in products if p.get('status') in {'attention_needed', 'partial', 'unavailable'})
+    qual_pending = sum(1 for p in products if p.get('status') == 'qualification_pending')
+    pending = sum(1 for p in products if p.get('status') == 'pending')
+    summary_parts = [
+        f"Healthy: `{healthy}`",
+        f"Attention: `{attention}`",
+        f"Qual Pending: `{qual_pending}`",
+        f"Pending: `{pending}`",
+    ]
+    if pkgs.get('status') == 'ok':
+        summary_parts.append(
+            f"Catalog Packages: `{pkgs['public_verified']}` verified / `{pkgs['restricted']}` restricted / `{pkgs['drift_or_error']}` issues"
+        )
+
     lines = [
         '## OPL Fleet Release Observation',
         '',
-        f"Generated at `{report['generated_at']}`",
-        '',
-        '| Subject | Lane | Stage | Public Version | Run |',
-        '| --- | --- | --- | --- | --- |',
+        f"Generated at `{report['generated_at']}` · {' · '.join(summary_parts)}",
     ]
-    for prod in report.get('products', []):
+
+    action_items: list[str] = []
+    for prod in products:
+        sid = prod['subject_id']
+        pstatus = prod.get('status', 'unavailable')
+        dispatch = prod.get('central_dispatch') or {}
+        if dispatch.get('status') in {'missing', 'unknown', 'dispatch_unavailable'}:
+            reason = f" ({dispatch['error']})" if dispatch.get('error') else ''
+            action_items.append(f"- `{sid}` central dispatch `{dispatch['status']}`{reason}")
+        if pstatus in {'unavailable', 'partial'}:
+            err = prod.get('error') or 'lane observation or channel probe failed'
+            action_items.append(f"- `{sid}` (`{pstatus}`): {err}")
+        for lane in prod.get('lanes', []):
+            stage = lane.get('stage')
+            if stage in {'blocked', 'qualification_failed', 'publisher_failure', 'publisher_cancelled', 'publisher_timed_out', 'qualification_pending'}:
+                link = f" ([Run]({lane['run_url']}))" if lane.get('run_url') else ''
+                cand = lane.get('candidate_version') or ((lane.get('receipt') or {}).get('candidate') or {}).get('version')
+                cand_note = f" candidate `{cand}`" if cand else ''
+                action_items.append(f"- `{sid}` / `{lane['lane']}`: `{stage}`{cand_note}{link}")
+    if action_items:
+        lines.extend(['', '### Action Required', '', *action_items])
+
+    lines.extend([
+        '',
+        '| Subject | Status | Lane | Stage | Public | Candidate | Updated | Run |',
+        '| --- | --- | --- | --- | --- | --- | --- | --- |',
+    ])
+    for prod in products:
+        pstatus = prod.get('status', 'unavailable')
         if not prod.get('lanes'):
-            lines.append(f"| `{prod['subject_id']}` | — | `{prod.get('status', 'unavailable')}` | — | — |")
+            lines.append(f"| `{prod['subject_id']}` | `{pstatus}` | — | `{pstatus}` | — | — | — | — |")
             continue
         for lane in prod['lanes']:
             pub = lane.get('published_channel') or {}
             pub_ver = pub.get('version') or pub.get('tag') or '—'
             if pub.get('asset_present') is False:
                 pub_ver += ' (asset missing)'
+            cand_ver = lane.get('candidate_version') or ((lane.get('receipt') or {}).get('candidate') or {}).get('version') or '—'
+            updated = _short_timestamp(lane.get('run_created_at'))
             run_link = f"[Actions]({lane['run_url']})" if lane.get('run_url') else '—'
-            lines.append(f"| `{prod['subject_id']}` | `{lane['lane']}` | `{lane['stage']}` | `{pub_ver}` | {run_link} |")
+            lines.append(
+                f"| `{prod['subject_id']}` | `{pstatus}` | `{lane['lane']}` | `{lane['stage']}` | `{pub_ver}` | `{cand_ver}` | `{updated}` | {run_link} |"
+            )
 
     if controller := report.get('dispatch_controller'):
         lines.extend(['', '### Central Daily Dispatch', ''])

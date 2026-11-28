@@ -122,5 +122,6 @@ jobs:
         with:
           name: opl-release-receipt-${{ inputs.subject_id }}-${{ inputs.lane }}-${{ github.run_id }}
           path: ${{ runner.temp }}/release-receipt.json
+          overwrite: true
           if-no-files-found: error
           retention-days: 30

@@ -14,6 +14,7 @@ from .observe import observe_fleet, render_markdown
 from .prepare import prepare_repository
 from .probes import probe_channel
 from .receipts import build_receipt
+from .verify_dispatch import verify_dispatch_from_env
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -68,6 +69,19 @@ def build_parser() -> argparse.ArgumentParser:
     obs.add_argument('--subject-id', default='')
     obs.add_argument('--output', type=Path, required=True)
     obs.add_argument('--markdown-output', type=Path)
+
+    vdisp = sub.add_parser('verify-dispatch', help='Verify a centrally dispatched owner workflow run')
+    vdisp.add_argument('--control-run-id', required=True)
+    vdisp.add_argument('--workflow', required=True)
+    vdisp.add_argument('--expected-title', required=True)
+    vdisp.add_argument('--repository')
+    vdisp.add_argument('--event-name')
+    vdisp.add_argument('--ref')
+    vdisp.add_argument('--run-attempt')
+    vdisp.add_argument('--actor-id')
+    vdisp.add_argument('--run-id')
+    vdisp.add_argument('--run-number')
+    vdisp.add_argument('--event-path', type=Path)
     return parser
 
 
@@ -154,6 +168,23 @@ def main(argv: list[str] | None = None) -> int:
                 with open(summary, 'a', encoding='utf-8') as fh:
                     fh.write(md)
             print(md)
+            return 0
+
+        if args.command == 'verify-dispatch':
+            result = verify_dispatch_from_env(
+                control_run_id=args.control_run_id,
+                workflow=args.workflow,
+                expected_title=args.expected_title,
+                repository=args.repository,
+                event_name=args.event_name,
+                ref=args.ref,
+                run_attempt=args.run_attempt,
+                actor_id=args.actor_id,
+                run_id=args.run_id,
+                run_number=args.run_number,
+                event_path=args.event_path,
+            )
+            print(json.dumps(result, indent=2))
             return 0
     except ReleaseError as exc:
         print(f'ERROR: {exc}', file=sys.stderr)

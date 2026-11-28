@@ -37,6 +37,16 @@ class ScriptsAndWorkflowsTests(unittest.TestCase):
         control_wf = (ROOT / '.github/workflows/control-daily-releases.yml').read_text(encoding='utf-8')
         self.assertIn('repositories: ${{ matrix.subject.repository_name }}', control_wf)
         self.assertNotIn('repositories: ${{ matrix.subject.repository }}', control_wf)
+        for wf in workflows:
+            self.assertNotIn('app-id:', wf.read_text(encoding='utf-8'), f'Deprecated app-id input found in {wf.name}')
+
+        verify_action = (ROOT / '.github/actions/verify-dispatch/action.yml').read_text(encoding='utf-8')
+        self.assertIn('opl_release verify-dispatch', verify_action)
+
+        sparkle_wf = (ROOT / '.github/workflows/reusable-macos-sparkle-release.yml').read_text(encoding='utf-8')
+        self.assertIn('emit_receipt:', sparkle_wf)
+        self.assertIn('receipt_stage:', sparkle_wf)
+        self.assertIn('overwrite: true', (ROOT / '.github/workflows/reusable-emit-receipt.yml').read_text(encoding='utf-8'))
 
         pub_v2 = (ROOT / '.github/workflows/reusable-publish-package-v2.yml').read_text(encoding='utf-8')
         self.assertIn('application/vnd.onepersonlab.package.v1', pub_v2)

@@ -143,7 +143,7 @@ def prepare_repository(root: Path, *, apply: bool = False, fallback_subject_id: 
 
     primary_lane = next((l for l in cfg['lanes'] if l.get('primary')), cfg['lanes'][0])
     channel = primary_lane.get('channel')
-    pub = probe_channel(cfg['repository'], channel) if channel else None
+    pub = probe_channel(cfg['repository'], channel, tag_prefix=cfg.get('tag_prefix', 'v')) if channel else None
     if pub and pub.get('status') != 'present':
         pub = None
     planned = plan_candidate(root, cfg, pub)

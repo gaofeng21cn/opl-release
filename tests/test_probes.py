@@ -81,6 +81,14 @@ class ProbeTests(unittest.TestCase):
         self.assertTrue(pre['asset_present'])
         self.assertEqual(pre['tag'], 'v2.0.2-nightly')
 
+        with patch('opl_release.probes.gh', side_effect=[
+            {'tag_name': 'desktop-v0.2.88', 'draft': False, 'html_url': 'https://github.com/o/r/releases/tag/desktop-v0.2.88', 'assets': []},
+            {'sha': 'b' * 40, 'parents': []},
+        ]):
+            prefixed = probe_channel('o/r', {'kind': 'github_release'}, tag_prefix='desktop-v')
+        self.assertEqual(prefixed['version'], '0.2.88')
+        self.assertEqual(prefixed['tag'], 'desktop-v0.2.88')
+
     def test_probe_sparkle_appcast_parses_version_and_build(self):
         xml = b'''<?xml version="1.0" encoding="utf-8"?>
         <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">

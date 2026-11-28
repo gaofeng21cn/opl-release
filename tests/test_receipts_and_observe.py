@@ -125,6 +125,36 @@ class ReceiptAndObserveTests(unittest.TestCase):
         md = render_markdown(report)
         self.assertIn('widget-alpha', md)
         self.assertIn('pub-pkg', md)
+        self.assertIn('### Action Required', md)
+        self.assertIn('`1.4.2`', md)
+
+    def test_select_lane_run_ignores_disabled_schedule_skip_and_prefers_dispatched_run(self):
+        from opl_release.observe import _observe_lane
+        runs = [
+            {'id': 200, 'event': 'schedule', 'status': 'completed', 'conclusion': 'skipped', 'head_sha': 'a' * 40, 'html_url': 'https://github.com/o/r/actions/runs/200', 'created_at': '2026-11-28T01:56:00Z', 'path': '.github/workflows/nightly.yml'},
+            {'id': 190, 'event': 'workflow_dispatch', 'status': 'completed', 'conclusion': 'failure', 'head_sha': 'b' * 40, 'html_url': 'https://github.com/o/r/actions/runs/190', 'created_at': '2026-11-28T01:39:00Z', 'path': '.github/workflows/nightly.yml'},
+        ]
+
+        def fake_gh(endpoint, **kwargs):
+            if '/workflows/nightly.yml/runs' in endpoint:
+                return {'workflow_runs': [runs[0]]}
+            if endpoint == 'repos/example/widget/actions/runs/190':
+                return runs[1]
+            if '/actions/runs/190/artifacts' in endpoint:
+                return {'artifacts': []}
+            raise AssertionError(endpoint)
+
+        with patch('opl_release.observe.gh', side_effect=fake_gh), \
+             patch('opl_release.receipts.gh', side_effect=fake_gh), \
+             patch('opl_release.observe.probe_channel', return_value={'status': 'present', 'version': '1.0.0'}):
+            row = _observe_lane(
+                'widget', 'example/widget',
+                {'lane': 'nightly', 'workflow': 'nightly.yml', 'daily_dispatch': True, 'channel': {'kind': 'github_prerelease'}},
+                None, None, preferred_run_id=190,
+            )
+        self.assertEqual(row['run_id'], 190)
+        self.assertEqual(row['stage'], 'publisher_failure')
+        self.assertEqual(row['run_created_at'], '2026-11-28T01:39:00Z')
 
 
 if __name__ == '__main__':

@@ -96,7 +96,13 @@ def _extract_asset(release: dict, channel: dict) -> dict:
     }
 
 
-def probe_github_release(repository: str, channel: dict) -> dict:
+def _version_from_tag(tag: str, tag_prefix: str = 'v') -> str:
+    if tag_prefix and tag.startswith(tag_prefix):
+        return tag[len(tag_prefix):]
+    return tag.lstrip('v')
+
+
+def probe_github_release(repository: str, channel: dict, *, tag_prefix: str = 'v') -> dict:
     try:
         release = gh(f'repos/{repository}/releases/latest')
     except ReleaseError as exc:
@@ -111,7 +117,7 @@ def probe_github_release(repository: str, channel: dict) -> dict:
         'status': 'present',
         'kind': 'github_release',
         'tag': tag,
-        'version': tag.lstrip('v'),
+        'version': _version_from_tag(tag, tag_prefix),
         'source_commit': commit['sha'],
         'parent_commits': commit['parents'],
         'url': release['html_url'],
@@ -119,7 +125,7 @@ def probe_github_release(repository: str, channel: dict) -> dict:
     }
 
 
-def probe_github_prerelease(repository: str, channel: dict) -> dict:
+def probe_github_prerelease(repository: str, channel: dict, *, tag_prefix: str = 'v') -> dict:
     try:
         releases = gh(f'repos/{repository}/releases?per_page=100')
     except ReleaseError as exc:
@@ -142,7 +148,7 @@ def probe_github_prerelease(repository: str, channel: dict) -> dict:
         'status': 'present',
         'kind': 'github_prerelease',
         'tag': tag,
-        'version': tag.lstrip('v'),
+        'version': _version_from_tag(tag, tag_prefix),
         'source_commit': commit['sha'],
         'parent_commits': commit['parents'],
         'url': selected['html_url'],
@@ -181,15 +187,15 @@ def probe_sparkle_appcast(repository: str, channel: dict) -> dict:
     }
 
 
-def probe_channel(repository: str, channel: dict) -> dict:
+def probe_channel(repository: str, channel: dict, *, tag_prefix: str = 'v') -> dict:
     """Dispatch channel readback purely on `channel['kind']`."""
     kind = channel['kind']
     if kind == 'oci':
         return probe_oci(channel)
     if kind == 'github_release':
-        return probe_github_release(repository, channel)
+        return probe_github_release(repository, channel, tag_prefix=tag_prefix)
     if kind == 'github_prerelease':
-        return probe_github_prerelease(repository, channel)
+        return probe_github_prerelease(repository, channel, tag_prefix=tag_prefix)
     if kind == 'sparkle_appcast':
         return probe_sparkle_appcast(repository, channel)
     raise ReleaseError(f'Unsupported channel protocol: {kind!r}')
